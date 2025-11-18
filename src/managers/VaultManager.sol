@@ -11,6 +11,7 @@ import {ISlasher} from "@symbiotic/interfaces/slasher/ISlasher.sol";
 import {IOperatorSpecificDelegator} from "@symbiotic/interfaces/delegator/IOperatorSpecificDelegator.sol";
 
 import {EnumerableMap} from "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {StakePowerManager} from "./extendable/StakePowerManager.sol";
 import {CaptureTimestampManager} from "./extendable/CaptureTimestampManager.sol";
@@ -31,17 +32,14 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
     using PauseableEnumerableSet for PauseableEnumerableSet.AddressSet;
     using PauseableEnumerableSet for PauseableEnumerableSet.Uint160Set;
     using Subnetwork for address;
+    using Math for uint256;
 
     error NotVault();
-    error NotOperatorVault();
     error VaultNotInitialized();
     error VaultAlreadyRegistered();
     error VaultEpochTooShort();
-    error InactiveVaultSlash();
     error UnknownSlasherType();
     error NonVetoSlasher();
-    error NoSlasher();
-    error TooOldTimestampSlash();
     error NotOperatorSpecificVault();
 
     /// @custom:storage-location erc7201:symbiotic.storage.VaultManager
@@ -69,9 +67,27 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
         OPERATOR_NETWORK_SPECIFIC
     }
 
+    /**
+     * @notice Structure to store slashing parameters
+     * @param epochStartTs The epoch start timestamp
+     * @param vault The vault address
+     * @param operator The operator address
+     * @param slashPercentage The percentage to slash
+     * @param subnetwork The subnetwork identifier
+     */
+    struct SlashParams {
+        uint48 epochStartTs;
+        address vault;
+        address operator;
+        uint256 slashPercentage;
+        bytes32 subnetwork;
+    }
+
     // keccak256(abi.encode(uint256(keccak256("symbiotic.storage.VaultManager")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant VaultManagerStorageLocation =
         0x485f0695561726d087d0cb5cf546efed37ef61dfced21455f1ba7eb5e5b3db00;
+
+    uint256 public constant PARTS_PER_BILLION = 1_000_000_000;
 
     /**
      * @notice Internal helper to access the VaultManager storage struct
@@ -105,61 +121,6 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
     function _VAULT_REGISTRY() internal view returns (address) {
         VaultManagerStorage storage $ = _getVaultManagerStorage();
         return $._vaultRegistry;
-    }
-
-    /**
-     * @notice Gets the total number of registered subnetworks
-     * @return uint256 The count of registered subnetworks
-     */
-    function _subnetworksLength() internal view returns (uint256) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        return $._subnetworks.length();
-    }
-
-    /**
-     * @notice Gets the subnetwork information at a specific index
-     * @param pos The index position to query
-     * @return uint160 The subnetwork address
-     * @return uint48 The time when the subnetwork was enabled
-     * @return uint48 The time when the subnetwork was disabled
-     */
-    function _subnetworkWithTimesAt(
-        uint256 pos
-    ) internal view returns (uint160, uint48, uint48) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        return $._subnetworks.at(pos);
-    }
-
-    /**
-     * @notice Gets all currently active subnetworks
-     * @return uint160[] Array of active subnetwork addresses
-     */
-    function _activeSubnetworks() internal view returns (uint160[] memory) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        return $._subnetworks.getActive(getCaptureTimestamp());
-    }
-
-    /**
-     * @notice Gets all subnetworks that were active at a specific timestamp
-     * @param timestamp The timestamp to check
-     * @return uint160[] Array of subnetwork addresses that were active at the timestamp
-     */
-    function _activeSubnetworksAt(
-        uint48 timestamp
-    ) internal view returns (uint160[] memory) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        return $._subnetworks.getActive(timestamp);
-    }
-
-    /**
-     * @notice Checks if a subnetwork was active at a specific timestamp
-     * @param timestamp The timestamp to check
-     * @param subnetwork The subnetwork identifier
-     * @return bool True if the subnetwork was active at the timestamp
-     */
-    function _subnetworkWasActiveAt(uint48 timestamp, uint96 subnetwork) internal view returns (bool) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        return $._subnetworks.wasActiveAt(timestamp, uint160(subnetwork));
     }
 
     /**
@@ -432,7 +393,8 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
      */
     function _getOperatorPowerAt(uint48 timestamp, address operator) internal view returns (uint256 power) {
         address[] memory vaults = _activeVaultsAt(timestamp, operator);
-        uint160[] memory subnetworks = _activeSubnetworksAt(timestamp);
+        uint160[] memory subnetworks = new uint160[](1);
+        subnetworks[0] = uint160(_NETWORK());
 
         return _getOperatorPowerAt(timestamp, operator, vaults, subnetworks);
     }
@@ -468,6 +430,7 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
     ) internal view returns (uint256 power) {
         for (uint256 i; i < vaults.length; ++i) {
             address vault = vaults[i];
+            // This loop could be taken out by passing only the current existing subnetwork _NETWORK()
             for (uint256 j; j < subnetworks.length; ++j) {
                 power += _getOperatorPowerAt(timestamp, operator, vault, uint96(subnetworks[j]));
             }
@@ -500,39 +463,6 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
     ) internal {
         VaultManagerStorage storage $ = _getVaultManagerStorage();
         $._subnetworks.register(_now(), uint160(subnetwork));
-    }
-
-    /**
-     * @notice Pauses a subnetwork
-     * @param subnetwork The subnetwork identifier to pause
-     */
-    function _pauseSubnetwork(
-        uint96 subnetwork
-    ) internal {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        $._subnetworks.pause(_now(), uint160(subnetwork));
-    }
-
-    /**
-     * @notice Unpauses a subnetwork
-     * @param subnetwork The subnetwork identifier to unpause
-     */
-    function _unpauseSubnetwork(
-        uint96 subnetwork
-    ) internal {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        $._subnetworks.unpause(_now(), _SLASHING_WINDOW(), uint160(subnetwork));
-    }
-
-    /**
-     * @notice Unregisters a subnetwork
-     * @param subnetwork The subnetwork identifier to unregister
-     */
-    function _unregisterSubnetwork(
-        uint96 subnetwork
-    ) internal {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        $._subnetworks.unregister(_now(), _SLASHING_WINDOW(), uint160(subnetwork));
     }
 
     /**
@@ -627,49 +557,77 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
 
     /**
      * @notice Slashes a vault based on provided conditions
-     * @param timestamp The timestamp when the slash occurs
-     * @param vault The vault address
-     * @param subnetwork The subnetwork identifier
-     * @param operator The operator to slash
-     * @param amount The amount to slash
-     * @param hints Additional data for the slasher
-     * @return response index for veto slashing or amount for instant slashing
+     * @param epochStartTs The epoch start timestamp
+     * @param operator The operator address
+     * @param percentage The percentage to slash (in parts per billion)
+     * @dev emit VaultManager.InstantSlash or VaultManager.VetoSlash based on slasher type
+     */
+    function _slash(uint48 epochStartTs, address operator, uint256 percentage) internal {
+        SlashParams memory params;
+        params.epochStartTs = epochStartTs;
+        params.operator = operator;
+        params.slashPercentage = percentage;
+        // Tanssi will use only one subnetwork so we only check the first
+        params.subnetwork = _NETWORK().subnetwork(0);
+
+        address[] memory vaults = _activeVaultsAt(epochStartTs, operator);
+        // simple pro-rata slasher
+        uint256 vaultsLength = vaults.length;
+        for (uint256 i; i < vaultsLength;) {
+            _processVaultSlashing(vaults[i], params);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @dev Get vault stake and calculate slashing amount.
+     * @param vault The vault address to calculate its stake
+     * @param params Struct containing slashing parameters
+     */
+    function _processVaultSlashing(address vault, SlashParams memory params) private {
+        uint256 vaultStake = IBaseDelegator(IVault(vault).delegator()).stakeAt(
+            params.subnetwork, params.operator, params.epochStartTs, new bytes(0)
+        );
+        // Slash percentage is already in parts per billion
+        // so we need to divide by a billion
+        uint256 slashAmount = params.slashPercentage.mulDiv(vaultStake, PARTS_PER_BILLION);
+
+        _slashVault(params.epochStartTs, vault, params.subnetwork, params.operator, slashAmount);
+    }
+
+    /**
+     * @dev Slashes a vault's stake for a specific operator. Middleware SDK already provides _slashVault function but  custom version is needed to avoid revert in specific scenarios for the gateway message passing.
+     * @param timestamp Time at which the epoch started
+     * @param vault Address of the vault to slash
+     * @param subnetwork Subnetwork identifier
+     * @param operator Address of the operator being slashed
+     * @param amount Amount to slash
      */
     function _slashVault(
         uint48 timestamp,
         address vault,
         bytes32 subnetwork,
         address operator,
-        uint256 amount,
-        bytes memory hints
-    ) internal returns (uint256 response) {
-        VaultManagerStorage storage $ = _getVaultManagerStorage();
-        if (!($._sharedVaults.contains(vault) || $._operatorVaults[operator].contains(vault))) {
-            revert NotOperatorVault();
-        }
-
-        if (!_vaultWasActiveAt(timestamp, operator, vault)) {
-            revert InactiveVaultSlash();
-        }
-
-        if (timestamp + _SLASHING_WINDOW() < _now()) {
-            revert TooOldTimestampSlash();
-        }
-
+        uint256 amount
+    ) private {
         address slasher = IVault(vault).slasher();
-        if (slasher == address(0)) {
-            revert NoSlasher();
-        }
 
-        uint64 slasherType = IEntity(slasher).TYPE();
-        if (slasherType == uint64(SlasherType.INSTANT)) {
-            response = ISlasher(slasher).slash(subnetwork, operator, amount, timestamp, hints);
-            emit InstantSlash(vault, subnetwork, response);
-        } else if (slasherType == uint64(SlasherType.VETO)) {
-            response = IVetoSlasher(slasher).requestSlash(subnetwork, operator, amount, timestamp, hints);
-            emit VetoSlash(vault, subnetwork, response);
+        if (slasher == address(0) || amount == 0) {
+            return;
+        }
+        uint256 slasherType = IEntity(slasher).TYPE();
+
+        uint256 response;
+        if (slasherType == uint256(SlasherType.INSTANT)) {
+            response = ISlasher(slasher).slash(subnetwork, operator, amount, timestamp, new bytes(0));
+            emit VaultManager.InstantSlash(vault, subnetwork, response);
+        } else if (slasherType == uint256(SlasherType.VETO)) {
+            response = IVetoSlasher(slasher).requestSlash(subnetwork, operator, amount, timestamp, new bytes(0));
+            emit VaultManager.VetoSlash(vault, subnetwork, response);
         } else {
-            revert UnknownSlasherType();
+            revert VaultManager.UnknownSlasherType();
         }
     }
 

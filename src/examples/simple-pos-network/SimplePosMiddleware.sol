@@ -37,7 +37,7 @@ contract SimplePosMiddleware is
         bytes32 key; // Key associated with the validator
     }
 
-    struct SlashParams {
+    struct VSlashParams {
         uint48 epochStart;
         address operator;
         uint256 totalPower;
@@ -139,14 +139,15 @@ contract SimplePosMiddleware is
         bytes[][] memory stakeHints,
         bytes[] memory slashHints
     ) public checkAccess {
-        SlashParams memory params;
+        VSlashParams memory params;
         params.epochStart = getEpochStart(epoch);
         params.operator = operatorByKey(abi.encode(key));
 
         _checkCanSlash(params.epochStart, key, params.operator);
 
         params.vaults = _activeVaultsAt(params.epochStart, params.operator);
-        params.subnetworks = _activeSubnetworksAt(params.epochStart);
+        params.subnetworks = new uint160[](1);
+        params.subnetworks[0] = uint160(_NETWORK());
         params.totalPower = _getOperatorPowerAt(params.epochStart, params.operator, params.vaults, params.subnetworks);
         uint256 vaultsLength = params.vaults.length;
         uint256 subnetworksLength = params.subnetworks.length;
@@ -173,7 +174,9 @@ contract SimplePosMiddleware is
                     continue;
                 }
 
-                _slashVault(params.epochStart, vault, subnetwork, params.operator, slashAmount, slashHints[i]);
+                _slash(
+                    params.epochStart, params.operator, Math.mulDiv(slashAmount, VaultManager.PARTS_PER_BILLION, stake)
+                );
             }
         }
     }
