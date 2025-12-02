@@ -130,54 +130,6 @@ contract BaseMiddlewareReader is BaseMiddleware, NoAccessManager, NoKeyManager {
     }
 
     /**
-     * @notice Gets the number of subnetworks
-     * @return The number of subnetworks
-     */
-    function subnetworksLength() external view returns (uint256) {
-        return _subnetworksLength();
-    }
-
-    /**
-     * @notice Gets the subnetwork and its times at a specific position
-     * @param pos The position
-     * @return The subnetwork address, start time, and end time
-     */
-    function subnetworkWithTimesAt(
-        uint256 pos
-    ) external view returns (uint160, uint48, uint48) {
-        return _subnetworkWithTimesAt(pos);
-    }
-
-    /**
-     * @notice Gets the list of active subnetworks
-     * @return The list of active subnetworks
-     */
-    function activeSubnetworks() external view returns (uint160[] memory) {
-        return _activeSubnetworks();
-    }
-
-    /**
-     * @notice Gets the list of active subnetworks at a specific timestamp
-     * @param timestamp The timestamp
-     * @return The list of active subnetworks at the given timestamp
-     */
-    function activeSubnetworksAt(
-        uint48 timestamp
-    ) external view returns (uint160[] memory) {
-        return _activeSubnetworksAt(timestamp);
-    }
-
-    /**
-     * @notice Checks if a subnetwork was active at a specific timestamp
-     * @param timestamp The timestamp
-     * @param subnetwork The subnetwork address
-     * @return True if the subnetwork was active at the given timestamp, false otherwise
-     */
-    function subnetworkWasActiveAt(uint48 timestamp, uint96 subnetwork) external view returns (bool) {
-        return _subnetworkWasActiveAt(timestamp, subnetwork);
-    }
-
-    /**
      * @notice Gets the number of shared vaults
      * @return The number of shared vaults
      */
