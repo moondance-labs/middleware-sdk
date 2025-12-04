@@ -332,50 +332,37 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
      * @param timestamp The timestamp to check
      * @param operator The operator address
      * @param vault The vault address
-     * @param subnetwork The subnetwork identifier
      * @return uint256 The stake amount at the timestamp
      */
-    function _getOperatorStakeAt(
-        uint48 timestamp,
-        address operator,
-        address vault,
-        uint96 subnetwork
-    ) private view returns (uint256) {
-        bytes32 subnetworkId = _NETWORK().subnetwork(subnetwork);
+    function _getOperatorStakeAt(uint48 timestamp, address operator, address vault) private view returns (uint256) {
+        bytes32 subnetworkId = _NETWORK().subnetwork(0);
         return IBaseDelegator(IVault(vault).delegator()).stakeAt(subnetworkId, operator, timestamp, "");
     }
 
     /**
-     * @notice Gets the power amount for an operator in a vault and subnetwork
+     * @notice Gets the power amount for an operator in a vault
      * @param operator The operator address
      * @param vault The vault address
-     * @param subnetwork The subnetwork identifier
      * @return uint256 The power amount
      */
-    function _getOperatorPower(address operator, address vault, uint96 subnetwork) internal view returns (uint256) {
-        return _getOperatorPowerAt(getCaptureTimestamp(), operator, vault, subnetwork);
+    function _getOperatorPower(address operator, address vault) internal view returns (uint256) {
+        return _getOperatorPowerAt(getCaptureTimestamp(), operator, vault);
     }
 
     /**
-     * @notice Gets the power amount for an operator in a vault and subnetwork at a specific timestamp
+     * @notice Gets the power amount for an operator in a vault at a specific timestamp
      * @param timestamp The timestamp to check
      * @param operator The operator address
      * @param vault The vault address
-     * @param subnetwork The subnetwork identifier
      * @return uint256 The power amount at the timestamp
      */
-    function _getOperatorPowerAt(
-        uint48 timestamp,
-        address operator,
-        address vault,
-        uint96 subnetwork
-    ) internal view returns (uint256) {
-        uint256 stake = _getOperatorStakeAt(timestamp, operator, vault, subnetwork);
+    function _getOperatorPowerAt(uint48 timestamp, address operator, address vault) internal view returns (uint256) {
+        uint256 stake = _getOperatorStakeAt(timestamp, operator, vault);
         return stakeToPower(vault, stake);
     }
 
     /**
-     * @notice Gets the total power amount for an operator across all vaults and subnetworks
+     * @notice Gets the total power amount for an operator across all vaults
      * @param operator The operator address
      * @return power The total power amount
      */
@@ -386,54 +373,42 @@ abstract contract VaultManager is NetworkStorage, SlashingWindowStorage, Capture
     }
 
     /**
-     * @notice Gets the total power amount for an operator across all vaults and subnetworks at a specific timestamp
+     * @notice Gets the total power amount for an operator across all vaults at a specific timestamp
      * @param timestamp The timestamp to check
      * @param operator The operator address
      * @return power The total power amount at the timestamp
      */
     function _getOperatorPowerAt(uint48 timestamp, address operator) internal view returns (uint256 power) {
         address[] memory vaults = _activeVaultsAt(timestamp, operator);
-        uint160[] memory subnetworks = new uint160[](1);
-        subnetworks[0] = uint160(_NETWORK());
 
-        return _getOperatorPowerAt(timestamp, operator, vaults, subnetworks);
+        return _getOperatorPowerAt(timestamp, operator, vaults);
     }
 
     /**
-     * @notice Gets the total power amount for an operator across all vaults and subnetworks
+     * @notice Gets the total power amount for an operator across all vaults
      * @param operator The operator address
      * @param vaults The list of vault addresses
-     * @param subnetworks The list of subnetwork identifiers
      * @return power The total power amount
      */
-    function _getOperatorPower(
-        address operator,
-        address[] memory vaults,
-        uint160[] memory subnetworks
-    ) internal view returns (uint256 power) {
-        return _getOperatorPowerAt(getCaptureTimestamp(), operator, vaults, subnetworks);
+    function _getOperatorPower(address operator, address[] memory vaults) internal view returns (uint256 power) {
+        return _getOperatorPowerAt(getCaptureTimestamp(), operator, vaults);
     }
 
     /**
-     * @notice Gets the total power amount for an operator across all vaults and subnetworks at a specific timestamp
+     * @notice Gets the total power amount for an operator across all vaults at a specific timestamp
      * @param timestamp The timestamp to check
      * @param operator The operator address
      * @param vaults The list of vault addresses
-     * @param subnetworks The list of subnetwork identifiers
      * @return power The total power amount at the timestamp
      */
     function _getOperatorPowerAt(
         uint48 timestamp,
         address operator,
-        address[] memory vaults,
-        uint160[] memory subnetworks
+        address[] memory vaults
     ) internal view returns (uint256 power) {
         for (uint256 i; i < vaults.length; ++i) {
             address vault = vaults[i];
-            // This loop could be taken out by passing only the current existing subnetwork _NETWORK()
-            for (uint256 j; j < subnetworks.length; ++j) {
-                power += _getOperatorPowerAt(timestamp, operator, vault, uint96(subnetworks[j]));
-            }
+            power += _getOperatorPowerAt(timestamp, operator, vault);
         }
 
         return power;

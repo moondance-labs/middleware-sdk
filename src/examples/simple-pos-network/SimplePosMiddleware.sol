@@ -148,7 +148,7 @@ contract SimplePosMiddleware is
         params.vaults = _activeVaultsAt(params.epochStart, params.operator);
         params.subnetworks = new uint160[](1);
         params.subnetworks[0] = uint160(_NETWORK());
-        params.totalPower = _getOperatorPowerAt(params.epochStart, params.operator, params.vaults, params.subnetworks);
+        params.totalPower = _getOperatorPowerAt(params.epochStart, params.operator, params.vaults);
         uint256 vaultsLength = params.vaults.length;
         uint256 subnetworksLength = params.subnetworks.length;
 
