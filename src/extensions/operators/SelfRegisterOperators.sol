@@ -374,10 +374,8 @@ abstract contract SelfRegisterOperators is BaseOperators, SigManager, EIP712Upgr
         address[] memory _vaults = _activeOperatorVaults(operator);
         address[] memory vaults = new address[](1);
         vaults[0] = vault;
-        uint160[] memory _subnetworks = new uint160[](1);
-        _subnetworks[0] = uint160(_NETWORK());
-        uint256 power = _getOperatorPower(operator, _vaults, _subnetworks);
-        power += _getOperatorPower(operator, vaults, _subnetworks);
+        uint256 power = _getOperatorPower(operator, _vaults);
+        power += _getOperatorPower(operator, vaults);
         return power < _getSelfRegisterOperatorsStorage().minPowerThreshold;
     }
 }
